@@ -50,4 +50,12 @@ class TicTacToeBoard:
     def switch_turn(self) -> None:
         self.player_turn = "o" if self.player_turn == "x" else "x"
 
-
+    def __str__(self) -> str:
+        rows = []
+        for i in range(0, 9, 3):
+            row = [
+                self.positions[j] if self.positions[j] else str(j)
+                for j in range(i, i+3)
+            ]
+            rows.append(" | ".join(row))
+        return "\n---------\n".join(rows)
