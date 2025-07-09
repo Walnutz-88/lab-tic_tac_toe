@@ -30,7 +30,8 @@ class TicTacToeBoard:
         elif self.check_draw():
             print("It's a draw!")
             self.state = "draw"
-
+        else:
+            self.switch_turn()
 
     def check_winner(self) -> bool:
         wins = [
@@ -46,4 +47,7 @@ class TicTacToeBoard:
     def check_draw(self) -> bool:
         return all(pos != "" for pos in self.positions) and not self.check_winner()
 
-    
+    def switch_turn(self) -> None:
+        self.player_turn = "o" if self.player_turn == "x" else "x"
+
+
