@@ -24,4 +24,26 @@ class TicTacToeBoard:
         self.positions[index] = self.player_turn
         print(self) 
 
+        if self.check_winner():
+            print(f"Player {self.player_turn.upper()} wins!")
+            self.state = f"{self.player_turn}_won"
+        elif self.check_draw():
+            print("It's a draw!")
+            self.state = "draw"
 
+
+    def check_winner(self) -> bool:
+        wins = [
+            (0,1,2),(3,4,5),(6,7,8),  
+            (0,3,6),(1,4,7),(2,5,8),  
+            (0,4,8),(2,4,6)           
+        ]
+        for a, b, c in wins:
+            if self.positions[a] == self.positions[b] == self.positions[c] != "":
+                return True
+        return False
+
+    def check_draw(self) -> bool:
+        return all(pos != "" for pos in self.positions) and not self.check_winner()
+
+    
