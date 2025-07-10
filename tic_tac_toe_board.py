@@ -1,8 +1,8 @@
 import json
 from dataclasses import dataclass, field, asdict
-import redis
+import redis.asyncio as redis
 
-# Configure Redis client
+# Configure async Redis client
 tic_tac_toe_redis = redis.Redis(
     host='ai.thewcl.com',
     port=6379,
@@ -10,8 +10,8 @@ tic_tac_toe_redis = redis.Redis(
     decode_responses=True
 )
 
-# Fixed Redis key for channel 6
 GAME_STATE_KEY = "tic_tac_toe:game_state:6"
+TTT_GAME_STATE_CHANGED = "ttt_game_state_changed"
 
 @dataclass
 class TicTacToeBoard:
@@ -20,37 +20,35 @@ class TicTacToeBoard:
     positions: list[str] = field(default_factory=lambda: [""] * 9)
 
     def serialize(self) -> str:
-        """Return the board as a JSON string."""
         return json.dumps(asdict(self))
 
-    def save_to_redis(self) -> None:
-        """Persist current board state to Redis."""
+    async def save_to_redis(self) -> None:
+        """Persist current board state to Redis (async)."""
         board_data = asdict(self)
-        tic_tac_toe_redis.json().set(GAME_STATE_KEY, ".", board_data)
+        await tic_tac_toe_redis.json().set(GAME_STATE_KEY, ".", board_data)
 
     @classmethod
-    def load_from_redis(cls) -> "TicTacToeBoard":
-        """Load a board state from Redis for channel 6, initializing if missing."""
-        data = tic_tac_toe_redis.json().get(GAME_STATE_KEY)
+    async def load_from_redis(cls) -> "TicTacToeBoard":
+        """Load or initialize a board state (async)."""
+        data = await tic_tac_toe_redis.json().get(GAME_STATE_KEY)
         if data is None:
-            # Initialize a fresh board if none exists
             board = cls()
-            board.save_to_redis()
+            await board.save_to_redis()
             return board
         return cls(**data)
 
-    def reset(self) -> None:
-        """Reset board to its initial state and overwrite Redis."""
+    async def reset(self) -> None:
+        """Reset and persist the board state (async)."""
         self.state = "is_playing"
         self.player_turn = "x"
         self.positions = [""] * 9
-        self.save_to_redis()
+        await self.save_to_redis()
 
     def is_my_turn(self, i_am: str) -> bool:
         return self.player_turn == i_am
 
     def make_move(self, index: int) -> None:
-        """Make a move at the given index, update state, and persist."""
+        # (same as before—this is sync logic, you can keep it here)
         if self.state != "is_playing":
             print("Game is already over.")
             return
@@ -61,10 +59,8 @@ class TicTacToeBoard:
             print("Spot taken, try again.")
             return
 
-        # Place marker
         self.positions[index] = self.player_turn
 
-        # Check for end conditions
         if self.check_winner():
             print(f"Player {self.player_turn.upper()} wins!")
             self.state = f"{self.player_turn}_won"
@@ -73,9 +69,6 @@ class TicTacToeBoard:
             self.state = "draw"
         else:
             self.switch_turn()
-
-        # Persist after move
-        self.save_to_redis()
 
     def check_winner(self) -> bool:
         wins = [
