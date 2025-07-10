@@ -1,14 +1,15 @@
 from tic_tac_toe_board import TicTacToeBoard
 
 def main():
-    board = TicTacToeBoard()
+    board = TicTacToeBoard.load_from_redis()
     print("Welcome to Tic-Tac-Toe!\n")
-    print(board)
 
     while board.state == "is_playing":
         try:
             player = input("What player are you? (x or o): ")
+            board = TicTacToeBoard.load_from_redis()
             if player == board.player_turn:
+                print(board)
                 choice = input(f"\nPlayer {board.player_turn.upper()}, enter move (0–8): ")
                 idx = int(choice)
             else:

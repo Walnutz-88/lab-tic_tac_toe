@@ -1,7 +1,9 @@
 [project]
-name = "lab-tic-tac-toe-step-1"
+name = "lab-tic-tac-toe"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13"
-dependencies = []
+dependencies = [
+    "redis>=6.2.0",
+]
