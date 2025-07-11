@@ -19,13 +19,16 @@ class TicTacToeBoard:
     player_turn: str = "x"
     positions: list[str] = field(default_factory=lambda: [""] * 9)
 
+    def to_dict(self) -> dict:
+        """Return a serializable dict of the current board state."""
+        return asdict(self)
+
     def serialize(self) -> str:
-        return json.dumps(asdict(self))
+        return json.dumps(self.to_dict())
 
     async def save_to_redis(self) -> None:
         """Persist current board state to Redis (async)."""
-        board_data = asdict(self)
-        await tic_tac_toe_redis.json().set(GAME_STATE_KEY, ".", board_data)
+        await tic_tac_toe_redis.json().set(GAME_STATE_KEY, ".", self.to_dict())
 
     @classmethod
     async def load_from_redis(cls) -> "TicTacToeBoard":
@@ -47,28 +50,44 @@ class TicTacToeBoard:
     def is_my_turn(self, i_am: str) -> bool:
         return self.player_turn == i_am
 
-    def make_move(self, index: int) -> None:
-        # (same as before—this is sync logic, you can keep it here)
+    def make_move(self, player: str, index: int) -> dict:
+        """
+        Attempt to place `player` at `index`.
+        Returns a dict:
+          - success: bool
+          - message: str
+          - board: dict (only on success)
+        """
         if self.state != "is_playing":
-            print("Game is already over.")
-            return
+            return {"success": False, "message": "Game is already over."}
+        if player != self.player_turn:
+            return {
+                "success": False,
+                "message": f"It is not player {player.upper()}'s turn."
+            }
         if not (0 <= index < 9):
-            print("Invalid index. Choose 0-8.")
-            return
+            return {"success": False, "message": "Invalid index. Choose 0–8."}
         if self.positions[index]:
-            print("Spot taken, try again.")
-            return
+            return {"success": False, "message": "Spot taken, try again."}
 
-        self.positions[index] = self.player_turn
+        # apply move
+        self.positions[index] = player
 
+        # check for end conditions
         if self.check_winner():
-            print(f"Player {self.player_turn.upper()} wins!")
-            self.state = f"{self.player_turn}_won"
+            self.state = f"{player}_won"
+            message = f"Player {player.upper()} wins!"
         elif self.check_draw():
-            print("It's a draw!")
             self.state = "draw"
+            message = "It's a draw!"
         else:
             self.switch_turn()
+            message = (
+                f"Player {player.upper()} moved to {index}. "
+                f"It is now {self.player_turn.upper()}'s turn."
+            )
+
+        return {"success": True, "message": message, "board": self.to_dict()}
 
     def check_winner(self) -> bool:
         wins = [
@@ -90,6 +109,9 @@ class TicTacToeBoard:
     def __str__(self) -> str:
         rows = []
         for i in range(0, 9, 3):
-            row = [self.positions[j] if self.positions[j] else str(j) for j in range(i, i+3)]
+            row = [
+                self.positions[j] if self.positions[j] else str(j)
+                for j in range(i, i+3)
+            ]
             rows.append(" | ".join(row))
         return "\n---------\n".join(rows)

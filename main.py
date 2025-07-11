@@ -20,41 +20,52 @@ async def handle_board_state(i_am_playing: str) -> bool:
     data = await tic_tac_toe_redis.json().get(GAME_STATE_KEY)
     if data is None:
         board = TicTacToeBoard()
-        await tic_tac_toe_redis.json().set(GAME_STATE_KEY, ".", json.loads(board.serialize()))
+        await board.save_to_redis()
     else:
         board = TicTacToeBoard(**data)
 
     # if game already finished, exit
     if board.state != "is_playing":
-        print(board)
+        print(json.dumps(board.to_dict(), indent=2))
         if board.state.endswith("_won"):
             winner = board.state[0].upper()
-            print(f"\n🏁 Player {winner} has already won. Exiting.")
+            print(f"\nPlayer {winner} has already won. Exiting.")
         else:
-            print("\n🏁 The game ended in a draw. Exiting.")
+            print("\nThe game ended in a draw. Exiting.")
         sys.exit(0)
 
     # only act if it's our turn
     if board.player_turn == i_am_playing:
-        print(board)
+        print(json.dumps(board.to_dict(), indent=2))
         move_str = input(f"\nPlayer {board.player_turn.upper()}, enter move (0–8): ")
         try:
             idx = int(move_str)
         except ValueError:
-            print("⚠ Please enter a number between 0 and 8.")
+            print("Please enter a number between 0 and 8.")
             return False
 
-        board.make_move(idx)
-        # persist updated board
-        await tic_tac_toe_redis.json().set(GAME_STATE_KEY, ".", json.loads(board.serialize()))
+        result = board.make_move(i_am_playing, idx)
+        print(result["message"])
 
-        # publish update
-        payload = json.dumps({"by": i_am_playing, "board": json.loads(board.serialize())})
-        await tic_tac_toe_redis.publish(TTT_GAME_STATE_CHANGED, payload)
-        return True
+        if result["success"]:
+            # persist updated board
+            await tic_tac_toe_redis.json().set(
+                GAME_STATE_KEY, ".", board.to_dict()
+            )
+
+            # show updated board
+            print(json.dumps(board.to_dict(), indent=2))
+
+            # publish update
+            payload = json.dumps({
+                "by": i_am_playing,
+                "board": board.to_dict()
+            })
+            await tic_tac_toe_redis.publish(TTT_GAME_STATE_CHANGED, payload)
+
+            return True
 
     return False
-
 
 async def listen_for_updates(i_am_playing: str):
     """
@@ -63,7 +74,7 @@ async def listen_for_updates(i_am_playing: str):
     """
     pubsub = tic_tac_toe_redis.pubsub()
     await pubsub.subscribe(TTT_GAME_STATE_CHANGED)
-    print(f"🔔 Subscribed to '{TTT_GAME_STATE_CHANGED}'. Waiting for updates…\n")
+    print(f"Subscribed to '{TTT_GAME_STATE_CHANGED}'. Waiting for updates…\n")
 
     # initial check & prompt
     await handle_board_state(i_am_playing)
@@ -74,7 +85,6 @@ async def listen_for_updates(i_am_playing: str):
             print("\n🔄 Detected a board update!")
             # run our handler again (will exit if finished)
             await handle_board_state(i_am_playing)
-
 
 async def main():
     parser = argparse.ArgumentParser(
@@ -93,7 +103,6 @@ async def main():
     args = parser.parse_args()
 
     if args.reset:
-        # async reset so we actually await the JSON.SET
         board = TicTacToeBoard()
         await board.reset()
         print("✔ Board has been reset. To start playing, run with --player x or --player o.")
@@ -102,9 +111,7 @@ async def main():
     if args.player is None:
         parser.error("either --player PLAYER is required to play, or use --reset to wipe the board")
 
-    # start the async pub/sub loop
     await listen_for_updates(args.player)
-
 
 if __name__ == "__main__":
     asyncio.run(main())
