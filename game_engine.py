@@ -3,92 +3,130 @@ import sys
 import asyncio
 import json
 
-from tic_tac_toe_board import (
-    TicTacToeBoard,
-    tic_tac_toe_redis,
-    GAME_STATE_KEY,
-    TTT_GAME_STATE_CHANGED
-)
+import httpx
+import redis.asyncio as redis
 
-async def handle_board_state(i_am_playing: str) -> bool:
-    """
-    Load the board, and if it's this player's turn, prompt for a move,
-    apply it, save state back to Redis, and publish on the pub/sub channel.
-    Returns True if a move was made.
-    """
-    # fetch or init board
-    data = await tic_tac_toe_redis.json().get(GAME_STATE_KEY)
-    if data is None:
-        board = TicTacToeBoard()
-        await board.save_to_redis()
-    else:
-        board = TicTacToeBoard(**data)
+# HTTP endpoint for our FastAPI server
+API_BASE_URL = "http://localhost:8000"
+# Redis pub/sub settings (only for update notifications)
+REDIS_HOST = 'ai.thewcl.com'
+REDIS_PORT = 6379
+REDIS_PASSWORD = 'atmega328'
+CHANNEL = 'ttt_game_state_changed'
 
-    # if game already finished, exit
-    if board.state != "is_playing":
-        print(json.dumps(board.to_dict(), indent=2))
-        if board.state.endswith("_won"):
-            winner = board.state[0].upper()
-            print(f"\nPlayer {winner} has already won. Exiting.")
+async def handle_board_state(i_am_playing: str, client: httpx.AsyncClient) -> bool:
+    """
+    Fetch the current game state via HTTP and handle the player's turn.
+    Returns True if a move was made, otherwise False.
+    """
+    try:
+        resp = await client.get(f"{API_BASE_URL}/state")
+        resp.raise_for_status()
+    except httpx.ReadTimeout:
+        print("⚠️ Request timed out when fetching game state. Retrying on next update...")
+        return False
+    except httpx.HTTPError as e:
+        print(f"⚠️ HTTP error fetching state: {e}")
+        return False
+
+    board = resp.json()
+
+    # If game already finished, display result and exit
+    if board.get('state') != 'is_playing':
+        print("\n🎮 Game Over 🎮")
+        print(json.dumps(board, indent=2))
+        if board['state'].endswith('_won'):
+            print(f"\n🏆 Player {board['state'][0].upper()} wins!")
         else:
-            print("\nThe game ended in a draw. Exiting.")
+            print("\n🤝 It's a draw!")
         sys.exit(0)
 
-    # only act if it's our turn
-    if board.player_turn == i_am_playing:
-        print(json.dumps(board.to_dict(), indent=2))
-        move_str = input(f"\nPlayer {board.player_turn.upper()}, enter move (0–8): ")
+    # If it's this player's turn, prompt and send move
+    if board.get('player_turn') == i_am_playing:
+        print(json.dumps(board, indent=2))
+        move_str = input(f"\nPlayer {i_am_playing.upper()}, enter move (0–8): ")
         try:
             idx = int(move_str)
         except ValueError:
             print("Please enter a number between 0 and 8.")
             return False
 
-        result = board.make_move(i_am_playing, idx)
-        print(result["message"])
-
-        if result["success"]:
-            # persist updated board
-            await tic_tac_toe_redis.json().set(
-                GAME_STATE_KEY, ".", board.to_dict()
+        # Send move via HTTP POST
+        try:
+            move_resp = await client.post(
+                f"{API_BASE_URL}/move",
+                json={"player": i_am_playing, "index": idx},
             )
+            move_resp.raise_for_status()
+        except httpx.ReadTimeout:
+            print("⚠️ Request timed out when sending move. Try again.")
+            return False
+        except httpx.HTTPError as e:
+            print(f"⚠️ HTTP error sending move: {e}")
+            return False
 
-            # show updated board
-            print(json.dumps(board.to_dict(), indent=2))
+        result = move_resp.json().get('result', {})
+        print(result.get('message', ''))
 
-            # publish update
-            payload = json.dumps({
-                "by": i_am_playing,
-                "board": board.to_dict()
-            })
-            await tic_tac_toe_redis.publish(TTT_GAME_STATE_CHANGED, payload)
+        if result.get('success'):
+            # Fetch and display updated board
+            try:
+                updated_resp = await client.get(f"{API_BASE_URL}/state")
+                updated_resp.raise_for_status()
+                updated_board = updated_resp.json()
+                print(json.dumps(updated_board, indent=2))
+            except Exception:
+                updated_board = board  # fallback
+
+            # Publish update to channel so other clients wake up
+            try:
+                redis_pub = redis.Redis(
+                    host=REDIS_HOST,
+                    port=REDIS_PORT,
+                    password=REDIS_PASSWORD,
+                    decode_responses=True
+                )
+                payload = json.dumps({"by": i_am_playing, "board": updated_board})
+                await redis_pub.publish(CHANNEL, payload)
+            except Exception as e:
+                print(f"⚠️ Warning: failed to publish update: {e}")
 
             return True
+        return False
 
+    # Not this player's turn
+    print(f"⏳ Not your turn. It is {board.get('player_turn').upper()}'s turn. Waiting for updates...")
     return False
 
 async def listen_for_updates(i_am_playing: str):
     """
-    Subscribe to the game-state-changed channel and
-    trigger handle_board_state() initially and on each update.
+    Subscribe to Redis pub/sub for state-change notifications,
+    and invoke the HTTP-based handler initially and on each update.
     """
-    pubsub = tic_tac_toe_redis.pubsub()
-    await pubsub.subscribe(TTT_GAME_STATE_CHANGED)
-    print(f"Subscribed to '{TTT_GAME_STATE_CHANGED}'. Waiting for updates…\n")
+    # HTTP client for GET/POST with no read timeout
+    async with httpx.AsyncClient(timeout=None) as client:
+        redis_client = redis.Redis(
+            host=REDIS_HOST,
+            port=REDIS_PORT,
+            password=REDIS_PASSWORD,
+            decode_responses=True
+        )
+        pubsub = redis_client.pubsub()
+        await pubsub.subscribe(CHANNEL)
+        print(f"Subscribed to '{CHANNEL}'. Waiting for updates…\n")
 
-    # initial check & prompt
-    await handle_board_state(i_am_playing)
+        # Initial check & prompt
+        await handle_board_state(i_am_playing, client)
 
-    # listen for others' moves
-    async for message in pubsub.listen():
-        if message.get("type") == "message":
-            print("\n🔄 Detected a board update!")
-            # run our handler again (will exit if finished)
-            await handle_board_state(i_am_playing)
+        # Listen for others' moves
+        async for message in pubsub.listen():
+            if message.get('type') == 'message':
+                print("\n🔄 Detected a board update!")
+                await handle_board_state(i_am_playing, client)
 
 async def main():
     parser = argparse.ArgumentParser(
-        description="Play or reset a Redis-backed Tic-Tac-Toe game (async)"
+        description="Play or reset a Tic-Tac-Toe game via HTTP + Redis pub/sub"
     )
     parser.add_argument(
         "--player",
@@ -98,17 +136,23 @@ async def main():
     parser.add_argument(
         "--reset",
         action="store_true",
-        help="Reset the game board to an empty state and exit"
+        help="Reset the game board via HTTP and exit"
     )
     args = parser.parse_args()
 
     if args.reset:
-        board = TicTacToeBoard()
-        await board.reset()
-        print("✔ Board has been reset. To start playing, run with --player x or --player o.")
+        async with httpx.AsyncClient(timeout=None) as client:
+            try:
+                resp = await client.post(f"{API_BASE_URL}/reset")
+                resp.raise_for_status()
+                data = resp.json()
+                print(data.get('message', 'Board reset.'))
+                print(json.dumps(data.get('board', {}), indent=2))
+            except httpx.HTTPError as e:
+                print(f"⚠️ HTTP error during reset: {e}")
         sys.exit(0)
 
-    if args.player is None:
+    if not args.player:
         parser.error("either --player PLAYER is required to play, or use --reset to wipe the board")
 
     await listen_for_updates(args.player)
