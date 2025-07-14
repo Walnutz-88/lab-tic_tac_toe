@@ -67,7 +67,7 @@ class TicTacToeBoard:
             }
         if not (0 <= index < 9):
             return {"success": False, "message": "Invalid index. Choose 0–8."}
-        if self.positions[index]:
+        if self.positions[index] != "":
             return {"success": False, "message": "Spot taken, try again."}
 
         # apply move

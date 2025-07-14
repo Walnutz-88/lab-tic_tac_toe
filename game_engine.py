@@ -44,7 +44,7 @@ async def handle_board_state(i_am_playing: str, client: httpx.AsyncClient) -> bo
     # If it's this player's turn, prompt and send move
     if board.get('player_turn') == i_am_playing:
         print(json.dumps(board, indent=2))
-        move_str = input(f"\nPlayer {i_am_playing.upper()}, enter move (0–8): ")
+        move_str = input(f"\nPlayer {i_am_playing.upper()}, enter move (0–8): ").strip()
         try:
             idx = int(move_str)
         except ValueError:
