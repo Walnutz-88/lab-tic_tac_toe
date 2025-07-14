@@ -5,9 +5,13 @@ import json
 
 import httpx
 import redis.asyncio as redis
+import websockets
+
+WEBSOCKET_URL = "ws://ai.thewcl.com:8706"
+
 
 # HTTP endpoint for our FastAPI server
-API_BASE_URL = "http://localhost:8000"
+API_BASE_URL = "http://localhost:8706"
 # Redis pub/sub settings (only for update notifications)
 REDIS_HOST = 'ai.thewcl.com'
 REDIS_PORT = 6379
@@ -87,6 +91,8 @@ async def handle_board_state(i_am_playing: str, client: httpx.AsyncClient) -> bo
                     decode_responses=True
                 )
                 payload = json.dumps({"by": i_am_playing, "board": updated_board})
+                async with websockets.connect(WEBSOCKET_URL) as ws:
+                    await ws.send(payload)
                 await redis_pub.publish(CHANNEL, payload)
             except Exception as e:
                 print(f"⚠️ Warning: failed to publish update: {e}")

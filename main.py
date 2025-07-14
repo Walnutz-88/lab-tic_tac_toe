@@ -27,3 +27,5 @@ async def reset_board():
         if e.status_code == 503:
             return {"message": "Board reset successful (warning: could not persist to Redis)", "board": board.to_dict()}
         raise
+    
+    
